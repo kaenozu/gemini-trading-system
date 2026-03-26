@@ -6,7 +6,7 @@ class RiskManager:
     Strictly controls POSITION SIZING and STOP LOSS.
     Goal: "Protect capital first."
     """
-    def __init__(self, risk_per_trade_pct: float = 0.01, atr_multiplier: float = 2.0, risk_reward_ratio: float = 2.0):
+    def __init__(self, risk_per_trade_pct: float = 0.01, atr_multiplier: float = 1.5, risk_reward_ratio: float = 2.0):
         """
         :param risk_per_trade_pct: Risk per trade as a fraction of account (e.g., 0.01 = 1%).
         :param atr_multiplier: Multiplier for ATR-based stop loss.
@@ -15,6 +15,27 @@ class RiskManager:
         self.risk_per_trade_pct = risk_per_trade_pct
         self.atr_multiplier = atr_multiplier
         self.risk_reward_ratio = risk_reward_ratio
+
+    def update_trailing_stop(self, current_stop: float, current_price: float, atr: float, direction: str = 'long') -> float:
+        """
+        Updates the trailing stop price.
+        For long positions, the stop only moves UP.
+        """
+        new_stop = current_stop
+        stop_distance = atr * self.atr_multiplier
+        
+        if direction == 'long':
+            # Calculate potential new stop based on current price
+            potential_stop = current_price - stop_distance
+            # Only move stop up
+            new_stop = max(current_stop, potential_stop)
+        else:
+            # Calculate potential new stop based on current price
+            potential_stop = current_price + stop_distance
+            # Only move stop down
+            new_stop = min(current_stop, potential_stop)
+            
+        return new_stop
 
     def calculate_stops(self, entry_price: float, atr: float, direction: str = 'long') -> tuple[float, float]:
         """

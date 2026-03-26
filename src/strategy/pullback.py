@@ -5,7 +5,7 @@ class PullbackStrategy:
     SPEC v4 compliant Strategy: Pullback (Dip Buying).
     Goal: Higher win rate by buying dips in established uptrends.
     """
-    def __init__(self, trend_sma: int = 200, dip_sma: int = 20, rsi_entry: int = 40, rsi_exit: int = 70):
+    def __init__(self, trend_sma: int = 100, dip_sma: int = 20, rsi_entry: int = 50, rsi_exit: int = 75):
         self.trend_sma = trend_sma
         self.dip_sma = dip_sma
         self.rsi_entry = rsi_entry

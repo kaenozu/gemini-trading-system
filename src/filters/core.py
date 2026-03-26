@@ -6,10 +6,10 @@ class TradeFilter:
     Strictly filters TRADES based on Regime, Liquidity, and Volatility.
     Goal: "Only trade in winning conditions."
     """
-    def __init__(self, min_liquidity: float = 1_000_000, min_volatility_atr_pct: float = 0.01):
+    def __init__(self, min_liquidity: float = 500_000, min_volatility_atr_pct: float = 0.005):
         """
-        :param min_liquidity: Minimum average daily volume (in currency units, approx).
-        :param min_volatility_atr_pct: Minimum ATR as % of price to ensure movement.
+        :param min_liquidity: Reduced to 500k from 1M.
+        :param min_volatility_atr_pct: Reduced to 0.5% from 1%.
         """
         self.min_liquidity = min_liquidity
         self.min_volatility_atr_pct = min_volatility_atr_pct

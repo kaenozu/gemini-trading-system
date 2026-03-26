@@ -1,123 +1,83 @@
 import pandas as pd
+from abc import ABC, abstractmethod
 from src.features.engine import FeatureEngine
 from src.strategy.pullback import PullbackStrategy
 from src.filters.core import TradeFilter
 from src.risk.manager import RiskManager
 
-class BacktestEngine:
+class BaseEngine(ABC):
     """
-    SPEC v4 compliant Backtest Engine.
-    Orchestrates the pipeline: Data -> Feature -> Strategy -> Filter -> Risk -> Execution.
-    Includes realistic slippage and commission.
+    Base Engine for shared logic.
     """
-    def __init__(self, initial_capital: float = 10000.0, commission_per_share: float = 0.01, slippage_pct: float = 0.0005):
+    def __init__(self, initial_capital: float = 10000.0, slippage_pct: float = 0.0005):
         self.initial_capital = initial_capital
         self.cash = initial_capital
-        self.commission_per_share = commission_per_share
         self.slippage_pct = slippage_pct
-        self.position = None # None or {'shares': int, 'entry_price': float, 'stop_price': float, 'target_price': float}
+        self.position = None
         self.trade_log = []
         self.equity_curve = []
-
-        # Components
         self.feature_engine = FeatureEngine()
-        # Strategy: Balanced Pullback
-        self.strategy = PullbackStrategy(trend_sma=200, dip_sma=20, rsi_entry=35) 
+        self.strategy = PullbackStrategy(trend_sma=100, dip_sma=20, rsi_entry=50, rsi_exit=75) 
         self.filter = TradeFilter() 
-        # Risk: Balanced Stops (ATR 2.5)
-        self.risk_manager = RiskManager(atr_multiplier=2.5)
+        self.risk_manager = RiskManager(atr_multiplier=1.5)
+
+    @abstractmethod
+    def _calculate_commission(self, cost: float) -> float:
+        pass
 
     def run(self, df: pd.DataFrame, benchmark_df: pd.DataFrame) -> pd.DataFrame:
-        """
-        Runs the backtest simulation.
-        """
-        # 1. Feature Engineering
         df = self.feature_engine.add_indicators(df)
         df = self.feature_engine.add_regime(df, benchmark_df)
+        df['Signal'] = self.strategy.generate_signals(df)
 
-        # 2. Pre-calculate Strategy Signals
-        raw_signals = self.strategy.generate_signals(df)
-        df['Signal'] = raw_signals
-
-        # 3. Simulation Loop
         for date, row in df.iterrows():
             self._process_bar(date, row)
-            
-            # Track Equity
-            current_value = self.cash
-            if self.position:
-                current_value += self.position['shares'] * row['Close']
+            current_value = self.cash + (self.position['shares'] * row['Close'] if self.position else 0)
             self.equity_curve.append({'Date': date, 'Equity': current_value})
-
         return pd.DataFrame(self.trade_log)
 
     def _process_bar(self, date, row):
-        current_price = row['Close']
-        high_price = row['High']
-        low_price = row['Low']
-        
         if self.position:
-            # Check Stop Loss (Slippage applied to exit)
-            if low_price <= self.position['stop_price']:
-                exit_price = min(self.position['stop_price'], row['Open'])
-                self._close_position(date, exit_price, 'Stop Loss')
+            self.position['stop_price'] = self.risk_manager.update_trailing_stop(
+                self.position['stop_price'], row['Close'], row['ATR_14']
+            )
+            if row['Low'] <= self.position['stop_price']:
+                self._close_position(date, min(self.position['stop_price'], row['Open']), 'Trailing Stop')
                 return
-
-            # Check Take Profit
-            if high_price >= self.position['target_price']:
+            if row['High'] >= self.position['target_price']:
                 self._close_position(date, self.position['target_price'], 'Take Profit')
                 return
-
-            # Strategy Exit
             if row['Signal'] == -1:
-                self._close_position(date, current_price, 'Strategy Exit')
+                self._close_position(date, row['Close'], 'Strategy Exit')
                 return
-
-        if not self.position:
-            if row['Signal'] == 1:
-                if self.filter.can_trade(row):
-                    self._open_position(date, row)
+        elif row['Signal'] == 1 and self.filter.can_trade(row):
+            self._open_position(date, row)
 
     def _open_position(self, date, row):
-        # Apply Slippage to Entry (Buy higher)
-        entry_price = row['Close'] * (1 + self.slippage_pct)
-        atr = row['ATR_14']
-        
-        stop_price, target_price = self.risk_manager.calculate_stops(entry_price, atr)
-        shares = self.risk_manager.calculate_position_size(self.cash, entry_price, stop_price)
-        
+        entry = row['Close'] * (1 + self.slippage_pct)
+        stop, target = self.risk_manager.calculate_stops(entry, row['ATR_14'])
+        shares = self.risk_manager.calculate_position_size(self.cash, entry, stop)
         if shares > 0:
-            cost = shares * entry_price
-            commission = shares * self.commission_per_share
-            self.cash -= (cost + commission)
-            self.position = {
-                'shares': shares,
-                'entry_price': entry_price,
-                'stop_price': stop_price,
-                'target_price': target_price,
-                'entry_date': date,
-                'commission_in': commission
-            }
-            self.trade_log.append({
-                'Type': 'Buy', 'Date': date, 'Price': entry_price, 
-                'Shares': shares, 'Reason': 'Signal + Filter', 'Commission': commission
-            })
+            cost = shares * entry
+            comm = self._calculate_commission(cost)
+            self.cash -= (cost + comm)
+            self.position = {'shares': shares, 'entry_price': entry, 'stop_price': stop, 'target_price': target, 'commission_in': comm}
+            self.trade_log.append({'Type': 'Buy', 'Date': date, 'Price': entry, 'Shares': shares, 'Commission': comm})
 
     def _close_position(self, date, price, reason):
-        # Apply Slippage to Exit (Sell lower)
-        exit_price = price * (1 - self.slippage_pct)
+        exit_p = price * (1 - self.slippage_pct)
         shares = self.position['shares']
-        proceeds = shares * exit_price
-        commission = shares * self.commission_per_share
-        
-        self.cash += (proceeds - commission)
-        
-        pnl = (proceeds - commission) - (shares * self.position['entry_price'] + self.position['commission_in'])
-        pnl_pct = pnl / (shares * self.position['entry_price'])
-        
-        self.trade_log.append({
-            'Type': 'Sell', 'Date': date, 'Price': exit_price, 
-            'Shares': shares, 'Reason': reason, 'PnL': pnl, 
-            'PnL_Pct': pnl_pct, 'Commission': commission
-        })
+        proceeds = shares * exit_p
+        comm = self._calculate_commission(proceeds)
+        self.cash += (proceeds - comm)
+        pnl = (proceeds - comm) - (shares * self.position['entry_price'] + self.position['commission_in'])
+        self.trade_log.append({'Type': 'Sell', 'Date': date, 'Price': exit_p, 'PnL': pnl, 'Commission': comm})
         self.position = None
+
+class JPBacktestEngine(BaseEngine):
+    def _calculate_commission(self, cost: float) -> float:
+        return 0.0 
+
+class USBacktestEngine(BaseEngine):
+    def _calculate_commission(self, cost: float) -> float:
+        return cost * 0.00495

@@ -3,11 +3,13 @@ import pandas as pd
 from src.execution.portfolio_engine import PortfolioEngine
 from src.analysis.scanner import Scanner
 
-# Universe definition
+# Universe definition (US + JP)
 TICKERS = [
-    "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "TSLA", "AVGO", "PEP", "COST",
-    "CSCO", "TMUS", "ADBE", "QCOM", "NFLX", "AMD", "INTC", "TXN", "AMAT", "HON",
-    "ISRG", "BKNG", "VRTX", "GILD", "ADP", "SBUX", "MDLZ", "REGN", "PYPL", "ADI"
+    # US Tech/Growth
+    "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "TSLA", "AVGO", "ADBE", "AMD",
+    # JP Blue Chips
+    "7203.T", "6758.T", "9984.T", "6861.T", "8035.T", "6981.T", "6501.T", "6098.T", "9432.T", "8306.T",
+    "7974.T", "4063.T", "6702.T", "6367.T", "6723.T", "9983.T", "7741.T", "4568.T", "6594.T", "6146.T"
 ]
 
 def run_backtest():

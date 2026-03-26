@@ -37,12 +37,21 @@ class Scanner:
                 df = self.fe.add_indicators(df)
                 df = self.fe.add_regime(df, bench_df)
                 
+                # Debugging
+                print(f"DEBUG: type(df)={type(df)}")
+                
                 # Get Signals
+                # Using the instance method explicitly
                 signals = self.strategy.generate_signals(df)
                 
                 # Check last row (Today)
                 last_row = df.iloc[-1]
-                last_signal = signals.iloc[-1]
+                
+                # Ensure signals is a Series (or similar indexable object)
+                if isinstance(signals, pd.Series):
+                    last_signal = signals.iloc[-1]
+                else:
+                    last_signal = signals[-1]
                 
                 if last_signal == 1: # Buy Signal
                     # Check Filter

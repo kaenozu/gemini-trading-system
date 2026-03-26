@@ -10,19 +10,20 @@ class FeatureEngine:
     def __init__(self):
         pass
 
+    def _handle_multiindex(self, df: pd.DataFrame) -> pd.DataFrame:
+        if isinstance(df.columns, pd.MultiIndex):
+            # If multiindex (Price, Ticker), drop the ticker level
+            return df.droplevel(1, axis=1)
+        return df
+
     def add_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
-        """
-        Adds standard indicators for MVP strategy:
-        - SMA (20, 50, 200)
-        - RSI (14)
-        - ATR (14)
-        """
         # Ensure copy
-        df = df.copy()
+        df = self._handle_multiindex(df.copy())
 
         # SMA
         df['SMA_20'] = df['Close'].rolling(window=20).mean()
         df['SMA_50'] = df['Close'].rolling(window=50).mean()
+        df['SMA_100'] = df['Close'].rolling(window=100).mean()
         df['SMA_200'] = df['Close'].rolling(window=200).mean()
         
         # Volume SMA
@@ -53,21 +54,20 @@ class FeatureEngine:
         """
         Adds Market Regime filter based on Benchmark.
         """
-        bench = benchmark_df.copy()
-        bench['Bench_SMA_200'] = bench['Close'].rolling(window=200).mean()
+        df = self._handle_multiindex(df.copy())
+        bench = self._handle_multiindex(benchmark_df.copy())
         
-        # Determine regime: 1 (Bull), 0 (Bear/Neutral)
-        bench['Regime'] = (bench['Close'] > bench['Bench_SMA_200']).astype(int)
+        # Calculate Benchmark SMA
+        bench_sma200 = bench['Close'].rolling(window=200).mean()
         
-        # Merge regime back to main dataframe based on Date index
-        # We assume indices are DatetimeIndex and aligned (or close enough)
-        # Using join is safer
-        if 'Regime' in df.columns:
-            df = df.drop(columns=['Regime'])
-            
-        df = df.join(bench[['Regime']], how='left')
+        # Determine regime
+        regime_series = (bench['Close'] > bench_sma200).astype(int)
+        regime_series.name = 'Regime'
         
-        # Fill NaN
-        df['Regime'] = df['Regime'].fillna(0).astype(int)
+        # Join using left join on index
+        df = df.join(regime_series, how='left')
+        
+        # Fill forward regime, fill NA with 0 (safe default)
+        df['Regime'] = df['Regime'].ffill().fillna(0).astype(int)
         
         return df

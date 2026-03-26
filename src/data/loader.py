@@ -19,7 +19,7 @@ class DataLoader:
     def download(self, ticker: str, start: str = "2000-01-01", end: str = None) -> pd.DataFrame:
         """
         Downloads data from yfinance and saves to local parquet.
-        Returns the DataFrame.
+        Handles both US and international tickers (e.g., 7203.T).
         """
         print(f"Downloading {ticker}...")
         df = yf.download(ticker, start=start, end=end, progress=False, auto_adjust=True)
@@ -32,14 +32,8 @@ class DataLoader:
         df.index = pd.to_datetime(df.index)
         df.sort_index(inplace=True)
         
-        # Standardize columns (Open, High, Low, Close, Volume)
-        # yfinance auto_adjust=True returns: Open, High, Low, Close, Volume (Adjusted)
-        # We might need to rename if columns are MultiIndex or different case
-        if isinstance(df.columns, pd.MultiIndex):
-            df = df.droplevel(1, axis=1)  # Remove Ticker level if present
-
         # Save to parquet
-        file_path = self._get_file_path(ticker)
+        file_path = self._get_file_path(ticker.replace('.', '_'))
         df.to_parquet(file_path)
         print(f"Saved {ticker} to {file_path}")
         return df
@@ -48,12 +42,12 @@ class DataLoader:
         """
         Loads data from local parquet storage.
         """
-        file_path = self._get_file_path(ticker)
+        file_path = self._get_file_path(ticker.replace('.', '_'))
         if not file_path.exists():
-            raise FileNotFoundError(f"No local data for {ticker}. Call download() first.")
+            # Try downloading if not exists
+            return self.download(ticker)
         
-        df = pd.read_parquet(file_path)
-        return df
+        return pd.read_parquet(file_path)
 
     def update(self, ticker: str) -> pd.DataFrame:
         """
