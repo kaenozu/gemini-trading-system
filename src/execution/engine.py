@@ -75,8 +75,10 @@ class BacktestEngine:
 
         if not self.position:
             if row['Signal'] == 1:
-                if self.filter.can_trade(row):
+                can_trade, reason = self.filter.can_trade(row)
+                if can_trade:
                     self._open_position(date, row)
+                # Optional: Log reason if 'can_trade' is False for debugging purposes
 
     def _open_position(self, date, row):
         # Apply Slippage to Entry (Buy higher)
