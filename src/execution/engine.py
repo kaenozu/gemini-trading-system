@@ -50,8 +50,13 @@ class BaseEngine(ABC):
             if row['Signal'] == -1:
                 self._close_position(date, row['Close'], 'Strategy Exit')
                 return
-        elif row['Signal'] == 1 and self.filter.can_trade(row):
-            self._open_position(date, row)
+
+        if not self.position:
+            if row['Signal'] == 1:
+                can_trade, reason = self.filter.can_trade(row)
+                if can_trade:
+                    self._open_position(date, row)
+                # Optional: Log reason if 'can_trade' is False for debugging purposes
 
     def _open_position(self, date, row):
         entry = row['Close'] * (1 + self.slippage_pct)
