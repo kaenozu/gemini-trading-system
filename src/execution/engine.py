@@ -74,10 +74,23 @@ class BaseEngine(ABC):
         self.trade_log.append({'Type': 'Sell', 'Date': date, 'Price': exit_p, 'PnL': pnl, 'Commission': comm})
         self.position = None
 
+from src.strategy.momentum import MomentumStrategy
+
 class JPBacktestEngine(BaseEngine):
+    def __init__(self, initial_capital: float = 100000.0, slippage_pct: float = 0.0005):
+        super().__init__(initial_capital, slippage_pct)
+        self.strategy = PullbackStrategy(trend_sma=200, dip_sma=20, rsi_entry=50, rsi_exit=70)
+        self.risk_manager.atr_multiplier = 2.0
+
     def _calculate_commission(self, cost: float) -> float:
-        return 0.0 
+        return 0.0
 
 class USBacktestEngine(BaseEngine):
+    def __init__(self, initial_capital: float = 100000.0, slippage_pct: float = 0.0005):
+        super().__init__(initial_capital, slippage_pct)
+        # US: Trend Following (Breakout) to capture move without waiting for deep pullback
+        self.strategy = MomentumStrategy(trend_sma=200, breakout_window=20)
+        self.risk_manager.atr_multiplier = 2.0
+
     def _calculate_commission(self, cost: float) -> float:
         return cost * 0.00495

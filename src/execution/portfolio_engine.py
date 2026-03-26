@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 from src.execution.engine import JPBacktestEngine, USBacktestEngine
 from src.data.loader import DataLoader
+from src.filters.correlation import CorrelationFilter
 
 class PortfolioEngine:
     """
@@ -14,6 +15,7 @@ class PortfolioEngine:
         self.sector_limit = sector_limit
         self.loader = DataLoader()
         self.results = {}
+        self.corr_filter = CorrelationFilter(threshold=0.7)
         # Simple sector mapping for the defined universe
         self.sectors = {
             "AAPL": "Tech", "MSFT": "Tech", "GOOGL": "Tech", "AMZN": "Consumer", "NVDA": "Tech",
@@ -27,6 +29,7 @@ class PortfolioEngine:
     def run_multi(self, tickers: list, benchmark: str, start: str, end: str):
         all_trade_logs = []
         active_sectors = {} # Tracks sector exposure
+        held_tickers = []
         
         print(f"Starting Portfolio Backtest for {len(tickers)} tickers (Sector Limit: {self.sector_limit})...")
         bench_df = self.loader.load(benchmark) if self.loader._get_file_path(benchmark).exists() else self.loader.download(benchmark, start=start, end=end)
@@ -34,22 +37,22 @@ class PortfolioEngine:
         for ticker in tickers:
             print(f"  Testing {ticker}...", end="\r")
             capital_per_ticker = self.initial_capital / self.max_positions
+            
+            # Filters
+            sector = self.sectors.get(ticker, "Other")
+            if active_sectors.get(sector, 0) >= self.sector_limit: continue
+            if self.corr_filter.is_highly_correlated(ticker, held_tickers, self.loader): continue
+
             engine = JPBacktestEngine(initial_capital=capital_per_ticker) if ticker.endswith('.T') else USBacktestEngine(initial_capital=capital_per_ticker)
             
-            try:
-                df = self.loader.load(ticker)
-            except:
-                df = self.loader.download(ticker, start=start, end=end)
-                
-            # Filter based on sector availability
-            sector = self.sectors.get(ticker, "Other")
-            if active_sectors.get(sector, 0) >= self.sector_limit:
-                continue
+            try: df = self.loader.load(ticker)
+            except: df = self.loader.download(ticker, start=start, end=end)
                 
             trade_log = engine.run(df, bench_df)
             
             if not trade_log.empty:
                 active_sectors[sector] = active_sectors.get(sector, 0) + 1
+                held_tickers.append(ticker)
                 trade_log['Ticker'] = ticker
                 all_trade_logs.append(trade_log)
                 self.results[ticker] = {'engine': engine, 'log': trade_log}

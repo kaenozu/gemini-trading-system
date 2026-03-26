@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.venv/
+venv/
+
+# Data & Results
+data/*.parquet
+backtest_result.html
+portfolio_result.html
+*.log
+
+# Environment
+.env
+.DS_Store

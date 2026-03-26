@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Trading Dashboard</title>
+    <style>
+        body { font-family: sans-serif; background: #f4f4f9; padding: 20px; }
+        .card { background: white; border-radius: 8px; padding: 15px; margin-bottom: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .signal-sell { border-left: 5px solid #ff4d4f; }
+        .signal-buy { border-left: 5px solid #52c41a; }
+        h1 { color: #333; }
+    </style>
+</head>
+<body>
+    <h1>Signal Dashboard</h1>
+    <div id="signals">読み込み中...</div>
+    <script>
+        fetch('/signals')
+            .then(res => res.json())
+            .then(data => {
+                const container = document.getElementById('signals');
+                container.innerHTML = data.map(s => `
+                    <div class="card ${s.Signal === 'BUY' ? 'signal-buy' : 'signal-sell'}">
+                        <h3>${s.Ticker} - ${s.Signal}</h3>
+                        <p>Price: ${s.Price.toFixed(2)}</p>
+                        ${s.Signal === 'BUY' ? `<p><strong>Stop: ${s.Stop.toFixed(2)} | Target: ${s.Target.toFixed(2)}</strong></p>` : ''}
+                    </div>
+                `).join('');
+            });
+    </script>
+</body>
+</html>

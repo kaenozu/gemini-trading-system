@@ -2,56 +2,56 @@ import os
 import pandas as pd
 import yfinance as yf
 from pathlib import Path
+from src.data.models import OHLCVModel
+from pydantic import ValidationError
 
 class DataLoader:
-    """
-    SPEC v4 compliant Data Loader.
-    Handles data fetching from yfinance and local parquet caching.
-    Ensures data integrity (no future data in raw fetch, but that's handled by source usually).
-    """
     def __init__(self, data_dir: str = "data"):
         self.data_dir = Path(data_dir)
         self.data_dir.mkdir(parents=True, exist_ok=True)
 
     def _get_file_path(self, ticker: str) -> Path:
-        return self.data_dir / f"{ticker}.parquet"
+        return self.data_dir / f"{ticker.replace('.', '_')}.parquet"
+
+    def _validate_data(self, df: pd.DataFrame):
+        """Validate dataframe rows using Pydantic model, ensuring float conversion."""
+        for _, row in df.iterrows():
+            try:
+                # Extracting OHLCV values explicitly to avoid index/multiindex keys
+                data = {
+                    'Open': float(row['Open']),
+                    'High': float(row['High']),
+                    'Low': float(row['Low']),
+                    'Close': float(row['Close']),
+                    'Volume': float(row['Volume'])
+                }
+                OHLCVModel(**data)
+            except (ValidationError, ValueError, TypeError) as e:
+                raise ValueError(f"Data validation failed: {e}")
 
     def download(self, ticker: str, start: str = "2000-01-01", end: str = None) -> pd.DataFrame:
-        """
-        Downloads data from yfinance and saves to local parquet.
-        Handles both US and international tickers (e.g., 7203.T).
-        """
         print(f"Downloading {ticker}...")
         df = yf.download(ticker, start=start, end=end, progress=False, auto_adjust=True)
-        
-        if df.empty:
-            print(f"Warning: No data found for {ticker}")
-            return df
+        if df.empty: return df
 
-        # Ensure index is DatetimeIndex and sorted
         df.index = pd.to_datetime(df.index)
         df.sort_index(inplace=True)
         
-        # Save to parquet
-        file_path = self._get_file_path(ticker.replace('.', '_'))
+        # Validation
+        self._validate_data(df)
+        
+        file_path = self._get_file_path(ticker)
         df.to_parquet(file_path)
-        print(f"Saved {ticker} to {file_path}")
         return df
 
     def load(self, ticker: str) -> pd.DataFrame:
-        """
-        Loads data from local parquet storage.
-        """
-        file_path = self._get_file_path(ticker.replace('.', '_'))
+        file_path = self._get_file_path(ticker)
         if not file_path.exists():
-            # Try downloading if not exists
             return self.download(ticker)
         
-        return pd.read_parquet(file_path)
+        df = pd.read_parquet(file_path)
+        self._validate_data(df)
+        return df
 
     def update(self, ticker: str) -> pd.DataFrame:
-        """
-        Updates local data with new data from yfinance.
-        (Simplified version: just re-downloads for now to ensure consistency)
-        """
         return self.download(ticker)
