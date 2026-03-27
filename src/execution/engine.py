@@ -1,6 +1,10 @@
 import pandas as pd
 from abc import ABC, abstractmethod
+from operator import itemgetter
+from typing import Optional
+
 from src.features.engine import FeatureEngine
+from src.strategy.base import BaseStrategy
 from src.strategy.pullback import PullbackStrategy
 from src.strategy.momentum import MomentumStrategy
 from src.filters.core import TradeFilter
@@ -33,75 +37,138 @@ class BaseEngine(ABC):
         df = self.feature_engine.add_regime(df, benchmark_df)
         df["Signal"] = self.strategy.generate_signals(df)
 
-        for date, row in df.iterrows():
-            self._process_bar(date, row)
-            current_value = self.cash + (
-                self.position["shares"] * row["Close"] if self.position else 0
-            )
+        close_idx = df.columns.get_loc("Close")
+        atr_idx = df.columns.get_loc("ATR_14")
+        low_idx = df.columns.get_loc("Low")
+        open_idx = df.columns.get_loc("Open")
+        high_idx = df.columns.get_loc("High")
+        signal_idx = df.columns.get_loc("Signal")
+        regime_idx = df.columns.get_loc("Regime")
+        vol_sma_idx = df.columns.get_loc("Vol_SMA_20")
+        bar_value_getter = itemgetter(
+            close_idx,
+            atr_idx,
+            low_idx,
+            open_idx,
+            high_idx,
+            signal_idx,
+        )
+
+        for date, row_values in zip(df.index, df.itertuples(index=False, name=None)):
+            close, atr, low, open_price, high, signal = bar_value_getter(row_values)
+
+            if self.position:
+                self._process_bar(date, close, atr, low, open_price, high, signal)
+            elif signal == 1:
+                row_context = self._build_trade_filter_context(
+                    row_values,
+                    regime_idx,
+                    vol_sma_idx,
+                    close,
+                    atr,
+                )
+                if self.filter.can_trade(row_context):
+                    self._open_position(date, close, atr)
+
+            current_value = self._calculate_equity(close)
             self.equity_curve.append({"Date": date, "Equity": current_value})
         return pd.DataFrame(self.trade_log)
 
-    def _process_bar(self, date, row):
+    def _build_trade_filter_context(self, row_values, regime_idx, vol_sma_idx, close, atr):
+        return {
+            "Regime": row_values[regime_idx],
+            "Vol_SMA_20": row_values[vol_sma_idx],
+            "Close": close,
+            "ATR_14": atr,
+        }
+
+    def _process_bar(self, date, close, atr, low, open_price, high, signal):
         if self.position:
-            self.position["stop_price"] = self.risk_manager.update_trailing_stop(
-                self.position["stop_price"], row["Close"], row["ATR_14"]
-            )
-            if row["Low"] <= self.position["stop_price"]:
-                self._close_position(
-                    date, min(self.position["stop_price"], row["Open"]), "Trailing Stop"
-                )
+            self._update_position_stop(close, atr)
+            if self._check_exit_conditions(date, close, low, open_price, high, signal):
                 return
-            if row["High"] >= self.position["target_price"]:
-                self._close_position(date, self.position["target_price"], "Take Profit")
-                return
-            if row["Signal"] == -1:
-                self._close_position(date, row["Close"], "Strategy Exit")
-                return
-        elif row["Signal"] == 1 and self.filter.can_trade(row):
-            self._open_position(date, row)
 
-    def _open_position(self, date, row):
-        entry = row["Close"] * (1 + self.slippage_pct)
-        stop, target = self.risk_manager.calculate_stops(entry, row["ATR_14"])
+    def _update_position_stop(self, close, atr):
+        self.position["stop_price"] = self.risk_manager.update_trailing_stop(
+            self.position["stop_price"], close, atr
+        )
+
+    def _check_exit_conditions(self, date, close, low, open_price, high, signal):
+        if low <= self.position["stop_price"]:
+            self._close_position(
+                date, min(self.position["stop_price"], open_price), "Trailing Stop"
+            )
+            return True
+        if high >= self.position["target_price"]:
+            self._close_position(date, self.position["target_price"], "Take Profit")
+            return True
+        if signal == -1:
+            self._close_position(date, close, "Strategy Exit")
+            return True
+        return False
+
+    def _calculate_equity(self, close):
+        return self.cash + (self.position["shares"] * close if self.position else 0)
+
+    def _build_open_position_payload(self, date, close, atr):
+        entry = close * (1 + self.slippage_pct)
+        stop, target = self.risk_manager.calculate_stops(entry, atr)
         shares = self.risk_manager.calculate_position_size(self.cash, entry, stop)
-        if shares > 0:
-            cost = shares * entry
-            comm = self._calculate_commission(cost)
-            self.cash -= cost + comm
-            self.position = {
-                "shares": shares,
-                "entry_price": entry,
-                "stop_price": stop,
-                "target_price": target,
-                "commission_in": comm,
-            }
-            self.trade_log.append(
-                {
-                    "Type": "Buy",
-                    "Date": date,
-                    "Price": entry,
-                    "Shares": shares,
-                    "Commission": comm,
-                }
-            )
+        if shares <= 0:
+            return None
 
-    def _close_position(self, date, price, reason):
-        exit_p = price * (1 - self.slippage_pct)
+        cost = shares * entry
+        commission = self._calculate_commission(cost)
+        position = {
+            "shares": shares,
+            "entry_price": entry,
+            "stop_price": stop,
+            "target_price": target,
+            "commission_in": commission,
+        }
+        trade = {
+            "Type": "Buy",
+            "Date": date,
+            "Price": entry,
+            "Shares": shares,
+            "Commission": commission,
+        }
+        return cost, commission, position, trade
+
+    def _calculate_close_position_values(self, price):
+        exit_price = price * (1 - self.slippage_pct)
         shares = self.position["shares"]
-        proceeds = shares * exit_p
-        comm = self._calculate_commission(proceeds)
-        self.cash += proceeds - comm
-        pnl = (proceeds - comm) - (
+        proceeds = shares * exit_price
+        commission = self._calculate_commission(proceeds)
+        pnl = (proceeds - commission) - (
             shares * self.position["entry_price"] + self.position["commission_in"]
         )
+        return exit_price, proceeds, commission, pnl
+
+    def _build_close_trade_payload(self, date, exit_price, pnl, commission):
+        return {
+            "Type": "Sell",
+            "Date": date,
+            "Price": exit_price,
+            "PnL": pnl,
+            "Commission": commission,
+        }
+
+    def _open_position(self, date, close, atr):
+        payload = self._build_open_position_payload(date, close, atr)
+        if payload is None:
+            return
+
+        cost, commission, position, trade = payload
+        self.cash -= cost + commission
+        self.position = position
+        self.trade_log.append(trade)
+
+    def _close_position(self, date, price, reason):
+        exit_price, proceeds, commission, pnl = self._calculate_close_position_values(price)
+        self.cash += proceeds - commission
         self.trade_log.append(
-            {
-                "Type": "Sell",
-                "Date": date,
-                "Price": exit_p,
-                "PnL": pnl,
-                "Commission": comm,
-            }
+            self._build_close_trade_payload(date, exit_price, pnl, commission)
         )
         self.position = None
 
