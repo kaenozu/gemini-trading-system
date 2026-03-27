@@ -42,12 +42,12 @@ class TradeFilter:
         
         return (atr / close) >= self.min_volatility_atr_pct
 
-    def can_trade(self, row: pd.Series) -> bool:
+    def can_trade(self, row: pd.Series) -> tuple[bool, str]:
         """
         Master filter check.
-        Returns True if ALL conditions are met.
+        Returns (True, "PASS") if ALL conditions are met, otherwise (False, Reason).
         """
-        if not self.check_regime(row): return False
-        if not self.check_liquidity(row): return False
-        if not self.check_volatility(row): return False
-        return True
+        if not self.check_regime(row): return False, "Regime"
+        if not self.check_liquidity(row): return False, "Liquidity"
+        if not self.check_volatility(row): return False, "Volatility"
+        return True, "PASS"

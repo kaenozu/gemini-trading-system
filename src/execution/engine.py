@@ -74,6 +74,7 @@ class BaseEngine(ABC):
             self.equity_curve.append({"Date": date, "Equity": current_value})
         return pd.DataFrame(self.trade_log)
 
+<<<<<<< HEAD
     def _build_trade_filter_context(self, row_values, regime_idx, vol_sma_idx, close, atr):
         return {
             "Regime": row_values[regime_idx],
