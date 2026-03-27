@@ -2,6 +2,7 @@ import sys
 import pandas as pd
 from src.execution.portfolio_engine import PortfolioEngine
 from src.analysis.scanner import Scanner
+from src.config.scanner_runtime import scanner_kwargs_from_env
 
 # Universe definition (US + JP)
 TICKERS = [
@@ -36,7 +37,7 @@ def run_backtest():
 
 def run_scan():
     print("Running Daily Market Scan...")
-    scanner = Scanner(TICKERS)
+    scanner = Scanner(TICKERS, **scanner_kwargs_from_env())
     results = scanner.scan()
     
     print("\n" + "="*40)

@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from src.analysis.scanner import Scanner
+from src.config.scanner_runtime import scanner_kwargs_from_env
 import uvicorn
 import asyncio
 
@@ -17,7 +18,7 @@ state = {"signals": []}
 
 @app.on_event("startup")
 async def startup_event():
-    scanner = Scanner(TICKERS)
+    scanner = Scanner(TICKERS, **scanner_kwargs_from_env())
     results = scanner.scan()
     state["signals"] = results.to_dict(orient="records")
 
