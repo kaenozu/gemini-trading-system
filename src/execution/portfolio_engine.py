@@ -3,6 +3,10 @@ import numpy as np
 from src.execution.engine import JPBacktestEngine, USBacktestEngine
 from src.data.loader import DataLoader
 from src.filters.correlation import CorrelationFilter
+import logging
+
+logger = logging.getLogger(__name__)
+
 
 class PortfolioEngine:
     """
@@ -28,28 +32,52 @@ class PortfolioEngine:
 
     def run_multi(self, tickers: list, benchmark: str, start: str, end: str):
         all_trade_logs = []
-        active_sectors = {} # Tracks sector exposure
+        active_sectors = {}  # Tracks sector exposure
         held_tickers = []
-        
+        data_cache = {}  # Cache for correlation filter
+
+        logger.info(f"Starting Portfolio Backtest for {len(tickers)} tickers (Sector Limit: {self.sector_limit})...")
         print(f"Starting Portfolio Backtest for {len(tickers)} tickers (Sector Limit: {self.sector_limit})...")
-        bench_df = self.loader.load(benchmark) if self.loader._get_file_path(benchmark).exists() else self.loader.download(benchmark, start=start, end=end)
+        
+        # Load benchmark data with proper error handling
+        try:
+            bench_df = self.loader.load(benchmark) if self.loader._get_file_path(benchmark).exists() else self.loader.download(benchmark, start=start, end=end)
+        except Exception as e:
+            logger.error(f"Failed to load benchmark data for {benchmark}: {e}")
+            return pd.DataFrame(), pd.DataFrame()
 
         for ticker in tickers:
             print(f"  Testing {ticker}...", end="\r")
             capital_per_ticker = self.initial_capital / self.max_positions
-            
+
             # Filters
             sector = self.sectors.get(ticker, "Other")
-            if active_sectors.get(sector, 0) >= self.sector_limit: continue
-            if self.corr_filter.is_highly_correlated(ticker, held_tickers, self.loader): continue
+            if active_sectors.get(sector, 0) >= self.sector_limit:
+                continue
+            if self.corr_filter.is_highly_correlated(ticker, held_tickers, self.loader, data_cache):
+                continue
 
             engine = JPBacktestEngine(initial_capital=capital_per_ticker) if ticker.endswith('.T') else USBacktestEngine(initial_capital=capital_per_ticker)
-            
-            try: df = self.loader.load(ticker)
-            except: df = self.loader.download(ticker, start=start, end=end)
-                
+
+            try:
+                df = self.loader.load(ticker)
+            except FileNotFoundError:
+                logger.info(f"Local data not found for {ticker}, downloading...")
+                try:
+                    df = self.loader.download(ticker, start=start, end=end)
+                except Exception as e:
+                    logger.error(f"Failed to download {ticker}: {e}")
+                    continue
+            except Exception as e:
+                logger.error(f"Failed to load {ticker}: {e}")
+                continue
+
+            if df.empty:
+                logger.warning(f"Empty data for {ticker}, skipping")
+                continue
+
             trade_log = engine.run(df, bench_df)
-            
+
             if not trade_log.empty:
                 active_sectors[sector] = active_sectors.get(sector, 0) + 1
                 held_tickers.append(ticker)
@@ -57,16 +85,18 @@ class PortfolioEngine:
                 all_trade_logs.append(trade_log)
                 self.results[ticker] = {'engine': engine, 'log': trade_log}
 
-        if not all_trade_logs: return pd.DataFrame(), pd.DataFrame()
-        
+        if not all_trade_logs:
+            logger.warning("No trades executed across all tickers")
+            return pd.DataFrame(), pd.DataFrame()
+
         portfolio_log = pd.concat(all_trade_logs).sort_values('Date')
-        
+
         equity_frames = []
         for ticker, data in self.results.items():
             eq = pd.DataFrame(data['engine'].equity_curve).set_index('Date')
             equity_frames.append(eq['Equity'].rename(ticker))
-            
+
         portfolio_equity = pd.concat(equity_frames, axis=1).ffill().fillna(capital_per_ticker)
         total_equity = portfolio_equity.sum(axis=1)
-        
+
         return portfolio_log, total_equity
