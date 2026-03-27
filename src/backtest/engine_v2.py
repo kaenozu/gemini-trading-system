@@ -129,7 +129,7 @@ class BacktestEngineV2:
 
             # ポジション処理
             if self.position:
-                self._process_position(date, row, signal, strategy, **kwargs)
+                self._process_position(date, row, signal, strategy, ticker, **kwargs)
             elif signal == 1:
                 self._open_position(date, row, strategy, ticker, **kwargs)
 
@@ -166,7 +166,7 @@ class BacktestEngineV2:
     ):
         """
         ポジションをオープン
-        
+
         Args:
             date: 日付
             row: 株価データ
@@ -176,8 +176,8 @@ class BacktestEngineV2:
         """
         entry_price = row['Close'] * (1 + self.slippage_pct)
 
-        # ポジションサイズ計算
-        shares = self._calculate_shares(strategy, entry_price, row, **kwargs)
+        # ポジションサイズ計算（戦略に委譲）
+        shares = self._calculate_shares(strategy, entry_price, row, ticker, **kwargs)
 
         if shares <= 0:
             return
@@ -212,34 +212,51 @@ class BacktestEngineV2:
         strategy: BaseStrategy,
         entry_price: float,
         row: pd.Series,
+        ticker: str,
         **kwargs
     ) -> int:
         """
-        購入株数を計算
-        
+        購入株数を計算（戦略の calculate_position_size に委譲）
+
         Args:
             strategy: 戦略インスタンス
             entry_price: エントリー価格
             row: 株価データ
+            ticker: 銘柄コード
             **kwargs: 戦略固有のパラメータ
-            
+
         Returns:
             int: 購入株数
         """
-        # リスクベース計算
-        risk_amount = self.cash * self.risk_per_trade
-
-        # stop_price があればそれを使用
-        stop_price = kwargs.get('stop_price')
-        if stop_price and stop_price < entry_price:
-            risk_per_share = entry_price - stop_price
-            if risk_per_share > 0:
-                shares = int(risk_amount / risk_per_share)
+        # 戦略の calculate_position_size を呼び出す
+        # 引数の形式は戦略によって異なるため、try-except でフォールバック
+        try:
+            # v2 戦略：calculate_position_size(capital, entry_price, stop_price, risk_per_trade)
+            stop_price = kwargs.get('stop_price')
+            if stop_price and stop_price < entry_price:
+                shares = strategy.calculate_position_size(
+                    capital=self.cash,
+                    entry_price=entry_price,
+                    stop_price=stop_price,
+                    risk_per_trade=self.risk_per_trade
+                )
             else:
+                # stop_price がない場合は戦略のデフォルト計算を使用
+                shares = strategy.calculate_position_size(
+                    capital=self.cash,
+                    entry_price=entry_price,
+                    stop_price=None,
+                    risk_per_trade=self.risk_per_trade
+                )
+        except TypeError:
+            # フォールバック：旧形式または引数が異なる場合
+            try:
+                shares = strategy.calculate_position_size(
+                    self.cash, entry_price, kwargs.get('stop_price', entry_price * 0.95)
+                )
+            except Exception:
+                # 最終フォールバック：ポジションサイズの最大値まで
                 shares = int(self.cash * self.max_position_pct / entry_price)
-        else:
-            # デフォルト：ポジションサイズの最大値まで
-            shares = int(self.cash * self.max_position_pct / entry_price)
 
         return shares
 
@@ -249,16 +266,18 @@ class BacktestEngineV2:
         row: pd.Series,
         signal: int,
         strategy: BaseStrategy,
+        ticker: str,
         **kwargs
     ):
         """
         ポジションを処理
-        
+
         Args:
             date: 日付
             row: 株価データ
             signal: シグナル
             strategy: 戦略インスタンス
+            ticker: 銘柄コード
             **kwargs: 戦略固有のパラメータ
         """
         if not self.position:
@@ -267,7 +286,7 @@ class BacktestEngineV2:
         # エグジットシグナルで決済
         if signal == -1:
             reason = self._get_exit_reason(row, strategy, **kwargs)
-            self._close_position(date, row['Close'], reason, row.get('Ticker', 'N/A'))
+            self._close_position(date, row['Close'], reason, ticker)
 
     def _get_exit_reason(
         self,
