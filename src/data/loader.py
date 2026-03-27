@@ -14,20 +14,25 @@ class DataLoader:
         return self.data_dir / f"{ticker.replace('.', '_')}.parquet"
 
     def _validate_data(self, df: pd.DataFrame):
-        """Validate dataframe rows using Pydantic model, ensuring float conversion."""
-        for _, row in df.iterrows():
-            try:
-                # Extracting OHLCV values explicitly to avoid index/multiindex keys
-                data = {
-                    'Open': float(row['Open']),
-                    'High': float(row['High']),
-                    'Low': float(row['Low']),
-                    'Close': float(row['Close']),
-                    'Volume': float(row['Volume'])
-                }
-                OHLCVModel(**data)
-            except (ValidationError, ValueError, TypeError) as e:
-                raise ValueError(f"Data validation failed: {e}")
+        """Validate dataframe using vectorized operations for performance."""
+        required_columns = ['Open', 'High', 'Low', 'Close', 'Volume']
+        
+        # 必須カラムの存在チェック
+        missing_cols = [col for col in required_columns if col not in df.columns]
+        if missing_cols:
+            raise ValueError(f"Missing required columns: {missing_cols}")
+
+        # 数値型への一括変換とバリデーション
+        try:
+            for col in required_columns:
+                df[col] = pd.to_numeric(df[col], errors='raise')
+        except (ValueError, TypeError) as e:
+            raise ValueError(f"Data validation failed (non-numeric data): {e}")
+
+        # 欠損値のチェック
+        if df[required_columns].isnull().any().any():
+            null_counts = df[required_columns].isnull().sum()
+            raise ValueError(f"Data contains null values: {null_counts[null_counts > 0].to_dict()}")
 
     def download(self, ticker: str, start: str = "2000-01-01", end: str = None) -> pd.DataFrame:
         print(f"Downloading {ticker}...")

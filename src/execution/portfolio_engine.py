@@ -32,7 +32,16 @@ class PortfolioEngine:
         held_tickers = []
         
         print(f"Starting Portfolio Backtest for {len(tickers)} tickers (Sector Limit: {self.sector_limit})...")
-        bench_df = self.loader.load(benchmark) if self.loader._get_file_path(benchmark).exists() else self.loader.download(benchmark, start=start, end=end)
+        
+        try:
+            bench_df = self.loader.load(benchmark) if self.loader._get_file_path(benchmark).exists() else self.loader.download(benchmark, start=start, end=end)
+        except Exception as e:
+            print(f"Error: Failed to load benchmark {benchmark}: {e}")
+            return pd.DataFrame(), pd.DataFrame()
+
+        if bench_df.empty:
+            print(f"Error: Benchmark data for {benchmark} is empty.")
+            return pd.DataFrame(), pd.DataFrame()
 
         for ticker in tickers:
             print(f"  Testing {ticker}...", end="\r")
@@ -45,8 +54,11 @@ class PortfolioEngine:
 
             engine = JPBacktestEngine(initial_capital=capital_per_ticker) if ticker.endswith('.T') else USBacktestEngine(initial_capital=capital_per_ticker)
             
-            try: df = self.loader.load(ticker)
-            except: df = self.loader.download(ticker, start=start, end=end)
+            try:
+                df = self.loader.load(ticker)
+            except (OSError, ValueError, FileNotFoundError) as e:
+                print(f"  Load failed for {ticker}, downloading: {e}")
+                df = self.loader.download(ticker, start=start, end=end)
                 
             trade_log = engine.run(df, bench_df)
             
